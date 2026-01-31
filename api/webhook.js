@@ -1,78 +1,75 @@
 const crypto = require('crypto');
-const https = require('https');
 
-module.exports = async (req, res) => {
-    console.log('--- Nueva Petición Recibida ---');
-    console.log('Método:', req.method);
-    console.log('Evento:', req.body ? req.body.event : 'Sin evento');
+export default async function handler(req) {
+    // 0. Variables de entorno (Probamos ambos nombres por si acaso)
+    const ZOOM_WEBHOOK_SECRET = (process.env.ZOOM_WEBHOOK_SECRET_TOKEN || process.env.ZOOM_WEBHOOK_SECRET || "").trim();
+    const GAS_URL = (process.env.GOOGLE_SCRIPT_URL || process.env.GAS_URL || "").trim();
 
-    try {
-        if (req.method === 'GET') {
-            return res.status(200).send('🚀 Servidor activo. Variables cargadas: ' +
-                (process.env.ZOOM_WEBHOOK_SECRET_TOKEN ? 'Secret ✅' : 'Secret ❌') + ' | ' +
-                (process.env.GOOGLE_SCRIPT_URL ? 'Google Script ✅' : 'Google Script ❌'));
-        }
-
-        const secretToken = (process.env.ZOOM_WEBHOOK_SECRET_TOKEN || '').trim();
-
-        // 1. Manejar Validación de Zoom (CRC)
-        if (req.body.event === 'endpoint.url_validation') {
-            if (!secretToken) {
-                console.error('CRÍTICO: No existe la variable ZOOM_WEBHOOK_SECRET_TOKEN');
-                return res.status(500).send('Configuración incompleta en Vercel');
-            }
-
-            const plainToken = req.body.payload.plainToken;
-            const signature = crypto
-                .createHmac('sha256', secretToken)
-                .update(plainToken)
-                .digest('hex');
-
-            console.log('--- DIAGNÓSTICO DE VALIDACIÓN ---');
-            console.log('PlainToken:', plainToken);
-            console.log('Secret en Vercel (COMPLETO):', secretToken);
-            console.log('Signature generada:', signature);
-
-            // Forzamos el Content-Type y enviamos solo lo necesario
-            res.setHeader('Content-Type', 'application/json');
-            return res.status(200).send(JSON.stringify({
-                plainToken: plainToken,
-                signature: signature
-            }));
-        }
-
-        // 2. Manejar Participantes (Solo si es POST y no es validación)
-        if (req.body.event === 'participant.joined') {
-            const part = req.body.payload.object.participant;
-            const data = {
-                name: part.user_name,
-                email: part.email,
-                meeting_id: req.body.payload.object.id,
-                topic: req.body.payload.object.topic,
-                timestamp: new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })
-            };
-
-            console.log('👤 Participante entró:', data.name);
-
-            if (process.env.GOOGLE_SCRIPT_URL) {
-                const url = new URL(process.env.GOOGLE_SCRIPT_URL);
-                const options = {
-                    hostname: url.hostname,
-                    path: url.pathname + url.search,
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
-                };
-
-                const reqGoogle = https.request(options);
-                reqGoogle.write(JSON.stringify(data));
-                reqGoogle.end();
-            }
-        }
-
-        return res.status(200).json({ status: 'ok' });
-
-    } catch (err) {
-        console.error('❌ Error:', err.message);
-        return res.status(500).json({ error: err.message });
+    // Diagnóstico para el navegador (GET)
+    if (req.method === 'GET') {
+        return new Response(`🚀 Servidor OK. Secret: ${ZOOM_WEBHOOK_SECRET ? '✅' : '❌'} | Google: ${GAS_URL ? '✅' : '❌'}`, { status: 200 });
     }
+
+    // Leer el cuerpo de la petición
+    const rawBody = await req.text();
+    let data = {};
+    try {
+        data = JSON.parse(rawBody);
+    } catch (e) {
+        return new Response("Invalid JSON", { status: 400 });
+    }
+
+    // 1. VALIDACIÓN DE URL (CRC)
+    if (data.event === "endpoint.url_validation") {
+        const plainToken = data.payload.plainToken;
+        const hash = crypto.createHmac("sha256", ZOOM_WEBHOOK_SECRET).update(plainToken).digest("hex");
+
+        console.log('✅ Validando con:', plainToken);
+
+        // Devolvemos ambos campos para asegurar compatibilidad total
+        return new Response(JSON.stringify({
+            plainToken: plainToken,
+            signature: hash,
+            encryptedToken: hash
+        }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+        });
+    }
+
+    // 2. PROCESAR PARTICIPANTE
+    if (data.event === "participant.joined") {
+        const participant = data.payload.object.participant;
+        const payloadForSheets = {
+            name: participant.user_name,
+            email: participant.email || 'Invitado sin correo',
+            meeting_id: data.payload.object.id,
+            topic: data.payload.object.topic,
+            timestamp: new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })
+        };
+
+        console.log('👤 Registrando a:', payloadForSheets.name);
+
+        if (GAS_URL) {
+            try {
+                await fetch(GAS_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payloadForSheets)
+                });
+                console.log('✅ Enviado a Google Sheets');
+            } catch (err) {
+                console.error('❌ Error enviando a Sheets:', err.message);
+            }
+        }
+    }
+
+    return new Response(JSON.stringify({ status: "received" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+    });
+}
+
+export const config = {
+    runtime: 'edge', // Esto lo hace ultra rápido y compatible con el código de Next.js
 };
