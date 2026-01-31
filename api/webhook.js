@@ -13,13 +13,13 @@ module.exports = async (req, res) => {
                 (process.env.GOOGLE_SCRIPT_URL ? 'Google Script ✅' : 'Google Script ❌'));
         }
 
-        const secretToken = process.env.ZOOM_WEBHOOK_SECRET_TOKEN;
+        const secretToken = (process.env.ZOOM_WEBHOOK_SECRET_TOKEN || '').trim();
 
         // 1. Manejar Validación de Zoom (CRC)
         if (req.body.event === 'endpoint.url_validation') {
             if (!secretToken) {
                 console.error('CRÍTICO: No existe la variable ZOOM_WEBHOOK_SECRET_TOKEN');
-                return res.status(500).send('Configuración incompleta');
+                return res.status(500).send('Configuración incompleta en Vercel');
             }
 
             const plainToken = req.body.payload.plainToken;
@@ -28,7 +28,11 @@ module.exports = async (req, res) => {
                 .update(plainToken)
                 .digest('hex');
 
-            console.log('✅ Respondiendo a validación de Zoom...');
+            console.log('--- DIAGNÓSTICO DE VALIDACIÓN ---');
+            console.log('PlainToken recibido:', plainToken);
+            console.log('Secret utilizado (primeros 3 caracteres):', secretToken.substring(0, 3) + '...');
+            console.log('Signature generada:', signature);
+
             return res.status(200).json({
                 plainToken: plainToken,
                 signature: signature
