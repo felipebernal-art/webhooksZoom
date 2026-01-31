@@ -4,51 +4,43 @@ module.exports = async (req, res) => {
     const ZOOM_WEBHOOK_SECRET = (process.env.ZOOM_WEBHOOK_SECRET_TOKEN || process.env.ZOOM_WEBHOOK_SECRET || "").trim();
     const GAS_URL = (process.env.GOOGLE_SCRIPT_URL || process.env.GAS_URL || "").trim();
 
-    // 0. Registrar cualquier petición para diagnóstico
-    if (req.method === 'POST') {
-        console.log('--- EVENTO RECIBIDO ---');
-        console.log('Tipo de evento:', req.body ? req.body.event : 'Sin evento');
-    }
-
     if (req.method === 'GET') {
-        return res.status(200).send(`🚀 Servidor OK. Secret: ${ZOOM_WEBHOOK_SECRET ? '✅' : '❌'} | Google: ${GAS_URL ? '✅' : '❌'}`);
+        return res.status(200).send(`🚀 Live List Server OK.`);
     }
 
     const data = req.body;
 
-    // 1. VALIDACIÓN DE URL (CRC)
     if (data && data.event === "endpoint.url_validation") {
         const plainToken = data.payload.plainToken;
         const hash = crypto.createHmac("sha256", ZOOM_WEBHOOK_SECRET).update(plainToken).digest("hex");
-        console.log('✅ URL Validada con éxito');
-        return res.status(200).json({
-            plainToken: plainToken,
-            signature: hash,
-            encryptedToken: hash
-        });
+        return res.status(200).json({ plainToken, signature: hash, encryptedToken: hash });
     }
 
-    // 2. PROCESAR PARTICIPANTE (Aceptamos ambos formatos por si acaso)
-    if (data && (data.event === "meeting.participant_joined" || data.event === "participant.joined")) {
+    let action = null;
+    if (data.event === "meeting.participant_joined" || data.event === "participant.joined") {
+        action = "JOIN";
+    } else if (data.event === "meeting.participant_left" || data.event === "participant.left") {
+        action = "LEFT";
+    }
+
+    if (action && data.payload.object.participant) {
         const participant = data.payload.object.participant;
-        const payloadForSheets = {
+        const payload = {
+            action: action,
             name: participant.user_name,
             email: participant.email || 'Invitado sin correo',
             meeting_id: data.payload.object.id,
-            topic: data.payload.object.topic,
+            topic: data.payload.object.topic, // Incluimos el tema
             timestamp: new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })
         };
 
-        console.log('👤 PARTICIPANTE DETECTADO:', payloadForSheets.name);
-
         if (GAS_URL) {
             try {
-                const response = await fetch(GAS_URL, {
+                await fetch(GAS_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payloadForSheets)
+                    body: JSON.stringify(payload)
                 });
-                console.log('✅ Respuesta de Google Sheets:', response.status);
             } catch (err) {
                 console.error('❌ Error enviando a Sheets:', err.message);
             }
