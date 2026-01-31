@@ -29,14 +29,16 @@ module.exports = async (req, res) => {
                 .digest('hex');
 
             console.log('--- DIAGNÓSTICO DE VALIDACIÓN ---');
-            console.log('PlainToken recibido:', plainToken);
-            console.log('Secret utilizado (primeros 3 caracteres):', secretToken.substring(0, 3) + '...');
+            console.log('PlainToken:', plainToken);
+            console.log('Secret en Vercel (COMPLETO):', secretToken);
             console.log('Signature generada:', signature);
 
-            return res.status(200).json({
+            // Forzamos el Content-Type y enviamos solo lo necesario
+            res.setHeader('Content-Type', 'application/json');
+            return res.status(200).send(JSON.stringify({
                 plainToken: plainToken,
                 signature: signature
-            });
+            }));
         }
 
         // 2. Manejar Participantes (Solo si es POST y no es validación)
