@@ -1,68 +1,72 @@
 const crypto = require('crypto');
-const axios = require('axios');
+const https = require('https');
 
 module.exports = async (req, res) => {
+    console.log('--- Nueva Petición Recibida ---');
+    console.log('Método:', req.method);
+    console.log('Evento:', req.body ? req.body.event : 'Sin evento');
+
     try {
-        // 0. Manejar peticiones GET (cuando abres la URL en el navegador)
         if (req.method === 'GET') {
-            return res.status(200).send('🚀 El servidor del Webhook está activo y listo para Zoom.');
+            return res.status(200).send('🚀 Servidor activo. Variables cargadas: ' +
+                (process.env.ZOOM_WEBHOOK_SECRET_TOKEN ? 'Secret ✅' : 'Secret ❌') + ' | ' +
+                (process.env.GOOGLE_SCRIPT_URL ? 'Google Script ✅' : 'Google Script ❌'));
         }
 
-        // 1. Verificar que el cuerpo de la petición existe
-        if (!req.body || !req.body.event) {
-            return res.status(400).send('No se recibió un evento válido.');
-        }
+        const secretToken = process.env.ZOOM_WEBHOOK_SECRET_TOKEN;
 
-        // 2. Manejar el reto de validación de Zoom (URL Validation)
+        // 1. Manejar Validación de Zoom (CRC)
         if (req.body.event === 'endpoint.url_validation') {
-            const secretToken = process.env.ZOOM_WEBHOOK_SECRET_TOKEN;
-
             if (!secretToken) {
-                console.error('ERROR: Falta la variable ZOOM_WEBHOOK_SECRET_TOKEN en Vercel');
-                return res.status(500).json({ message: 'Secret Token missing' });
+                console.error('CRÍTICO: No existe la variable ZOOM_WEBHOOK_SECRET_TOKEN');
+                return res.status(500).send('Configuración incompleta');
             }
 
             const plainToken = req.body.payload.plainToken;
-            const hashForValidate = crypto
+            const signature = crypto
                 .createHmac('sha256', secretToken)
                 .update(plainToken)
                 .digest('hex');
 
-            console.log('Validación de URL procesada con éxito');
+            console.log('✅ Respondiendo a validación de Zoom...');
             return res.status(200).json({
                 plainToken: plainToken,
-                signature: hashForValidate
+                signature: signature
             });
         }
 
-        // 3. Manejar eventos de participantes
+        // 2. Manejar Participantes (Solo si es POST y no es validación)
         if (req.body.event === 'participant.joined') {
-            const participant = req.body.payload.object.participant;
-            const meetingId = req.body.payload.object.id;
-            const meetingTopic = req.body.payload.object.topic;
-
-            const dataForSheets = {
-                name: participant.user_name,
-                email: participant.email,
-                meeting_id: meetingId,
-                topic: meetingTopic,
+            const part = req.body.payload.object.participant;
+            const data = {
+                name: part.user_name,
+                email: part.email,
+                meeting_id: req.body.payload.object.id,
+                topic: req.body.payload.object.topic,
                 timestamp: new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })
             };
 
-            // Solo enviamos a Google si tenemos la URL configurada
+            console.log('👤 Participante entró:', data.name);
+
             if (process.env.GOOGLE_SCRIPT_URL) {
-                await axios.post(process.env.GOOGLE_SCRIPT_URL, dataForSheets);
-                console.log('✅ Datos enviados a Sheets:', dataForSheets.name);
-            } else {
-                console.warn('⚠️ GOOGLE_SCRIPT_URL no configurada.');
+                const url = new URL(process.env.GOOGLE_SCRIPT_URL);
+                const options = {
+                    hostname: url.hostname,
+                    path: url.pathname + url.search,
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                };
+
+                const reqGoogle = https.request(options);
+                reqGoogle.write(JSON.stringify(data));
+                reqGoogle.end();
             }
         }
 
-        // Siempre responder 200 a Zoom para confirmar recepción
-        res.status(200).json({ status: 'received' });
+        return res.status(200).json({ status: 'ok' });
 
-    } catch (error) {
-        console.error('❌ Error en el Webhook:', error.message);
-        res.status(500).json({ error: 'Internal Server Error', detail: error.message });
+    } catch (err) {
+        console.error('❌ Error:', err.message);
+        return res.status(500).json({ error: err.message });
     }
 };
