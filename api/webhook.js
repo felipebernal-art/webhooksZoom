@@ -1,23 +1,16 @@
 const crypto = require('crypto');
 
 module.exports = async (req, res) => {
-    // 1. Buscamos el secreto en la URL (?s=...) o en la variable de entorno
     const { s } = req.query;
     const ZOOM_WEBHOOK_SECRET = (s || process.env.ZOOM_WEBHOOK_SECRET_TOKEN || "").trim();
     const GAS_URL = (process.env.GOOGLE_SCRIPT_URL || process.env.GAS_URL || "").trim();
 
     const data = req.body;
 
-    // 2. VALIDACIÓN DE URL (CRC)
+    // 1. VALIDACIÓN DE URL (CRC)
     if (data && data.event === "endpoint.url_validation") {
-        if (!ZOOM_WEBHOOK_SECRET) {
-            return res.status(400).send("Falta el Secret Token para validar.");
-        }
         const plainToken = data.payload.plainToken;
         const hash = crypto.createHmac("sha256", ZOOM_WEBHOOK_SECRET).update(plainToken).digest("hex");
-
-        console.log('✅ URL Validada usando el secreto:', s ? 'Proporcionado en URL' : 'Variable de entorno');
-
         return res.status(200).json({
             plainToken: plainToken,
             signature: hash,
@@ -25,7 +18,7 @@ module.exports = async (req, res) => {
         });
     }
 
-    // 3. DETECTAR EVENTOS
+    // 2. DETECTAR EVENTOS
     let action = null;
     if (data && (data.event === "meeting.participant_joined" || data.event === "participant.joined")) {
         action = "JOIN";
@@ -45,20 +38,30 @@ module.exports = async (req, res) => {
             timestamp: new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })
         };
 
-        res.status(200).json({ status: "received" });
-
+        // 3. ENVIAR A GOOGLE (Esperamos a que termine antes de responder a Zoom)
         if (GAS_URL) {
             try {
-                await fetch(GAS_URL, {
+                console.log(`📤 Enviando ${action} de ${payload.name} a Google...`);
+
+                const response = await fetch(GAS_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
+
+                if (response.ok) {
+                    console.log('✅ Google Sheets recibió los datos correctamente.');
+                } else {
+                    console.error('⚠️ Google Sheets respondió con error:', response.status);
+                }
             } catch (err) {
-                console.error('❌ Error API:', err.message);
+                console.error('❌ Error de conexión con Google:', err.message);
             }
         }
-    } else {
-        res.status(200).json({ status: "ignored" });
+
+        // 4. RESPONDER A ZOOM (Al final para asegurar la ejecución)
+        return res.status(200).json({ status: "received" });
     }
+
+    return res.status(200).json({ status: "ignored" });
 };
