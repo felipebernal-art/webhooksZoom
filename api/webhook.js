@@ -3,7 +3,9 @@ const crypto = require('crypto');
 module.exports = async (req, res) => {
     const { s } = req.query;
     const ZOOM_WEBHOOK_SECRET = (s || process.env.ZOOM_WEBHOOK_SECRET_TOKEN || "").trim();
-    const GAS_URL = (process.env.GOOGLE_SCRIPT_URL || process.env.GAS_URL || "").trim();
+    
+    // URL de tu formulario de respuestas (cambiamos viewform por formResponse)
+    const FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSeHKDY45czHBQ9d4bIvwX17wAnGhiQkhMmFqxRI4gvvwC21NA/formResponse";
 
     const data = req.body;
 
@@ -24,49 +26,34 @@ module.exports = async (req, res) => {
 
     if (action && data.payload.object.participant) {
         const participant = data.payload.object.participant;
-        const payload = {
-            action: action,
-            name: participant.user_name,
-            email: participant.email || 'Invitado sin correo',
-            meeting_id: data.payload.object.id,
-            topic: data.payload.object.topic,
-            event_ts: data.event_ts,
-            zoom_user_id: participant.user_id,
-            timestamp: new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })
-        };
+        
+        // Mapeamos los campos de Zoom a los IDs de tu Google Form
+        const formParams = new URLSearchParams();
+        formParams.append('entry.101963435', participant.user_name);                    // Nombre
+        formParams.append('entry.1759790462', participant.email || 'Invitado sin correo');  // Correo
+        formParams.append('entry.2034263188', data.payload.object.id);                  // Meeting ID
+        formParams.append('entry.2032219750', data.payload.object.topic);               // Tema
+        formParams.append('entry.472479858', action);                                   // Accion
+        formParams.append('entry.361261917', new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })); // Fecha/Hora
+        formParams.append('entry.1294083632', data.event_ts);                           // Event TS
+        formParams.append('entry.576761649', participant.user_id);                      // Zoom User ID
 
-        const startTime = Date.now();
-        console.log(`🚀 [${action}] Iniciando envío para: ${payload.name}`);
+        // Enviamos la respuesta a Zoom de inmediato
+        res.status(200).json({ status: "sent_to_form" });
 
-        if (GAS_URL) {
-            try {
-                // Ponemos un timeout de 15 segundos para el fetch
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-                const response = await fetch(GAS_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                    signal: controller.signal
-                });
-
-                clearTimeout(timeoutId);
-                const duration = Date.now() - startTime;
-
-                if (response.ok) {
-                    console.log(`✅ Google respondió OK en ${duration}ms para ${payload.name}`);
-                } else {
-                    console.error(`⚠️ Google dio error ${response.status} en ${duration}ms`);
-                }
-            } catch (err) {
-                const duration = Date.now() - startTime;
-                console.error(`❌ ERROR CRÍTICO tras ${duration}ms:`, err.message);
-            }
+        // Enviamos al formulario (Fire and forget, es ultra confiable)
+        try {
+            fetch(FORM_URL, {
+                method: 'POST',
+                mode: 'no-cors', // Importante para Google Forms
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: formParams.toString()
+            }).catch(err => console.error("Error enviando al Form:", err.message));
+        } catch (err) {
+            console.error("Error crítico:", err.message);
         }
-
-        return res.status(200).json({ status: "received" });
+        
+    } else {
+        res.status(200).json({ status: "ignored" });
     }
-
-    return res.status(200).json({ status: "ignored" });
 };
