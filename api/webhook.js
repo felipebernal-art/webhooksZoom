@@ -7,18 +7,12 @@ module.exports = async (req, res) => {
 
     const data = req.body;
 
-    // 1. VALIDACIÓN DE URL (CRC)
     if (data && data.event === "endpoint.url_validation") {
         const plainToken = data.payload.plainToken;
         const hash = crypto.createHmac("sha256", ZOOM_WEBHOOK_SECRET).update(plainToken).digest("hex");
-        return res.status(200).json({
-            plainToken: plainToken,
-            signature: hash,
-            encryptedToken: hash
-        });
+        return res.status(200).json({ plainToken, signature: hash, encryptedToken: hash });
     }
 
-    // 2. DETECTAR EVENTOS
     let action = null;
     if (data && (data.event === "meeting.participant_joined" || data.event === "participant.joined")) {
         action = "JOIN";
@@ -35,33 +29,25 @@ module.exports = async (req, res) => {
             meeting_id: data.payload.object.id,
             topic: data.payload.object.topic,
             event_ts: data.event_ts,
+            // CAPTURAMOS EL ID ÚNICO DE CONEXIÓN
+            zoom_user_id: participant.user_id,
             timestamp: new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })
         };
 
-        // 3. ENVIAR A GOOGLE (Esperamos a que termine antes de responder a Zoom)
+        res.status(200).json({ status: "received" });
+
         if (GAS_URL) {
             try {
-                console.log(`📤 Enviando ${action} de ${payload.name} a Google...`);
-
-                const response = await fetch(GAS_URL, {
+                await fetch(GAS_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
-
-                if (response.ok) {
-                    console.log('✅ Google Sheets recibió los datos correctamente.');
-                } else {
-                    console.error('⚠️ Google Sheets respondió con error:', response.status);
-                }
             } catch (err) {
-                console.error('❌ Error de conexión con Google:', err.message);
+                console.error('❌ Error API:', err.message);
             }
         }
-
-        // 4. RESPONDER A ZOOM (Al final para asegurar la ejecución)
-        return res.status(200).json({ status: "received" });
+    } else {
+        res.status(200).json({ status: "ignored" });
     }
-
-    return res.status(200).json({ status: "ignored" });
 };
