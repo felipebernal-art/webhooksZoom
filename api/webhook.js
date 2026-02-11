@@ -5,7 +5,8 @@ module.exports = async (req, res) => {
     const ZOOM_WEBHOOK_SECRET = (s || process.env.ZOOM_WEBHOOK_SECRET_TOKEN || "").trim();
     
     // URL de tu formulario (asegúrate de que termine en /formResponse)
-    const FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSeHKDY45czHBQ9d4bIvwX17wAnGhiQkhMmFqxRI4gvvwC21NA/formResponse";
+    const FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSdAuNPrd31xyED1JiesrjhcoUmd8jzCDn9di43mEGdFybG-wA/formResponse";
+    
 
     const data = req.body;
 
